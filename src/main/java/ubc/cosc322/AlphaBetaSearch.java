@@ -9,10 +9,10 @@ public class AlphaBetaSearch {
     private static final int WIN_SCORE = 1_000_000;
     private static final int NEG_INF = -WIN_SCORE * 2;
     private static final int POS_INF = WIN_SCORE * 2;
-    // private static final int DEFAULT_MAX_DEPTH = 5;
-    private static final int DEFAULT_MAX_DEPTH = 3;
-    // private static final long DEFAULT_SOFT_LIMIT_MILLIS = 27_000L;
-    private static final long DEFAULT_SOFT_LIMIT_MILLIS = 3_000L;
+    private static final int DEFAULT_MAX_DEPTH = 5;
+    // private static final int DEFAULT_MAX_DEPTH = 3;
+    private static final long DEFAULT_SOFT_LIMIT_MILLIS = 27_000L;
+    // private static final long DEFAULT_SOFT_LIMIT_MILLIS = 3_000L;
 
     private static final int DEPTH_ONE_ROOT_MOVE_LIMIT = 192;
     private static final int ROOT_MOVE_LIMIT = 96;

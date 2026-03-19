@@ -378,6 +378,21 @@ public class COSC322Test extends GamePlayer {
         }
 
         currentState = AmazonsBoardState.fromServerState(encodedState);
+        log("Top-left samples:");
+
+        log("(1,4)=%d (1,7)=%d (4,1)=%d (4,10)=%d", 
+            currentState.get(1,4),
+            currentState.get(1,7),
+            currentState.get(4,1),
+            currentState.get(4,10));
+        log("(7,1)=%d (7,10)=%d (10,4)=%d (10,7)=%d",
+            currentState.get(7,1),
+            currentState.get(7,10),
+            currentState.get(10,4),
+            currentState.get(10,7));
+
+
+
 
         if (gamegui != null) {
             gamegui.setGameState(encodedState);
