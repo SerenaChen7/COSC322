@@ -10,14 +10,13 @@ public class AlphaBetaSearch {
     private static final int NEG_INF = -WIN_SCORE * 2;
     private static final int POS_INF = WIN_SCORE * 2;
     private static final int DEFAULT_MAX_DEPTH = 5;
-    // private static final int DEFAULT_MAX_DEPTH = 3;
     private static final long DEFAULT_SOFT_LIMIT_MILLIS = 27_000L;
-    // private static final long DEFAULT_SOFT_LIMIT_MILLIS = 3_000L;
-
     private static final int DEPTH_ONE_ROOT_MOVE_LIMIT = 192;
     private static final int ROOT_MOVE_LIMIT = 96;
     private static final int CHILD_MOVE_LIMIT = 24;
-    private static final int CHILD_PREFILTER_LIMIT = 64;
+    private static final int MAX_PLY = 20;
+    private static final int ASPIRATION_DELTA = 80;
+
     private final long softLimitMillis;
     private final int maxDepth;
 
@@ -45,25 +44,11 @@ public class AlphaBetaSearch {
             this.elapsedMillis = elapsedMillis;
         }
 
-        public AmazonsMove getMove() {
-            return move;
-        }
-
-        public int getScore() {
-            return score;
-        }
-
-        public int getDepth() {
-            return depth;
-        }
-
-        public long getNodes() {
-            return nodes;
-        }
-
-        public long getElapsedMillis() {
-            return elapsedMillis;
-        }
+        public AmazonsMove getMove() { return move; }
+        public int getScore() { return score; }
+        public int getDepth() { return depth; }
+        public long getNodes() { return nodes; }
+        public long getElapsedMillis() { return elapsedMillis; }
     }
 
     public SearchResult chooseMove(AmazonsBoardState board, int sideToMove) {
@@ -77,40 +62,87 @@ public class AlphaBetaSearch {
         AmazonsMove bestMove = legalMoves.get(0);
         int bestScore = NEG_INF;
         int bestDepth = 0;
-        long bestNodes = 0L;
+
+        // Single worker reused across all depth iterations so killer moves persist.
+        SearchWorker worker = new SearchWorker(board, deadlineMillis);
         AmazonsMove preferredMove = null;
 
         for (int depth = 1; depth <= maxDepth; depth++) {
-            if (depth > 1 && System.currentTimeMillis() >= deadlineMillis) {
+            if (System.currentTimeMillis() >= deadlineMillis) {
                 break;
             }
 
-            long workerDeadline = depth == 1 ? Long.MAX_VALUE : deadlineMillis;
             List<AmazonsMove> orderedMoves = orderRootMoves(board, sideToMove, preferredMove, depth);
-            boolean timedOut = false;
+
+            // Aspiration windows: narrow the initial search window based on the previous score.
+            int alpha, beta;
+            if (depth > 2 && bestScore != NEG_INF) {
+                alpha = bestScore - ASPIRATION_DELTA;
+                beta  = bestScore + ASPIRATION_DELTA;
+            } else {
+                alpha = NEG_INF;
+                beta  = POS_INF;
+            }
 
             AmazonsMove depthBestMove = null;
             int depthBestScore = NEG_INF;
-            long depthNodes = 0;
+            boolean timedOut = false;
 
-            for (AmazonsMove move : orderedMoves) {
-                board.applyMove(move, sideToMove);
-                SearchWorker worker = new SearchWorker(board, workerDeadline);
-                int score = -worker.negamax(
-                    AmazonsBoardState.opponent(sideToMove), depth - 1,
-                    NEG_INF, POS_INF, 1
-                );
-                board.undoMove(move, sideToMove);
-                depthNodes += worker.nodes;
+            // Retry loop for aspiration window failures.
+            aspirationLoop:
+            while (true) {
+                int searchAlpha = alpha;
+                depthBestMove = null;
+                depthBestScore = NEG_INF;
+                boolean firstMove = true;
 
-                if (worker.timedOut) {
-                    timedOut = true;
-                    break;
+                for (AmazonsMove move : orderedMoves) {
+                    board.applyMove(move, sideToMove);
+                    int score;
+                    if (firstMove) {
+                        // Full window for first (best-ordered) move.
+                        score = -worker.negamax(
+                            AmazonsBoardState.opponent(sideToMove), depth - 1,
+                            -beta, -searchAlpha, 1
+                        );
+                        firstMove = false;
+                    } else {
+                        // Null-window (PVS) search for remaining moves.
+                        score = -worker.negamax(
+                            AmazonsBoardState.opponent(sideToMove), depth - 1,
+                            -searchAlpha - 1, -searchAlpha, 1
+                        );
+                        // Re-search with full window if score is inside the window.
+                        if (!worker.timedOut && score > searchAlpha && score < beta) {
+                            score = -worker.negamax(
+                                AmazonsBoardState.opponent(sideToMove), depth - 1,
+                                -beta, -searchAlpha, 1
+                            );
+                        }
+                    }
+                    board.undoMove(move, sideToMove);
+
+                    if (worker.timedOut) {
+                        timedOut = true;
+                        break aspirationLoop;
+                    }
+
+                    if (score > depthBestScore) {
+                        depthBestScore = score;
+                        depthBestMove = move;
+                    }
+                    if (score > searchAlpha) {
+                        searchAlpha = score;
+                    }
                 }
 
-                if (score > depthBestScore) {
-                    depthBestScore = score;
-                    depthBestMove = move;
+                // Handle aspiration window failures.
+                if (depthBestScore <= alpha && alpha != NEG_INF) {
+                    alpha = NEG_INF; // Fail low: widen to full window.
+                } else if (depthBestScore >= beta && beta != POS_INF) {
+                    beta = POS_INF; // Fail high: widen to full window.
+                } else {
+                    break; // Within window — done.
                 }
             }
 
@@ -118,12 +150,11 @@ public class AlphaBetaSearch {
                 bestMove = depthBestMove;
                 bestScore = depthBestScore;
                 bestDepth = depth;
-                bestNodes = depthNodes;
                 preferredMove = bestMove;
             }
         }
 
-        return new SearchResult(bestMove, bestScore, bestDepth, bestNodes, System.currentTimeMillis() - startMillis);
+        return new SearchResult(bestMove, bestScore, bestDepth, worker.nodes, System.currentTimeMillis() - startMillis);
     }
 
     private List<AmazonsMove> orderRootMoves(AmazonsBoardState board, int player,
@@ -143,10 +174,9 @@ public class AlphaBetaSearch {
 
         Collections.sort(scoredMoves, Comparator.comparingInt(ScoredMove::getScore).reversed());
 
-        int rootLimit = moves.size() > 1000 ? ROOT_MOVE_LIMIT / 2 : ROOT_MOVE_LIMIT;
         int limit = depthRemaining <= 1
             ? Math.min(scoredMoves.size(), DEPTH_ONE_ROOT_MOVE_LIMIT)
-            : Math.min(scoredMoves.size(), rootLimit);
+            : Math.min(scoredMoves.size(), ROOT_MOVE_LIMIT);
 
         List<AmazonsMove> ordered = new ArrayList<AmazonsMove>(limit);
         for (int i = 0; i < limit; i++) {
@@ -186,6 +216,10 @@ public class AlphaBetaSearch {
         boolean timedOut;
         long nodes;
 
+        // Killer moves: two per ply for beta-cutoff move ordering bonus.
+        private final AmazonsMove[] killer0 = new AmazonsMove[MAX_PLY];
+        private final AmazonsMove[] killer1 = new AmazonsMove[MAX_PLY];
+
         SearchWorker(AmazonsBoardState board, long deadlineMillis) {
             this.board = board;
             this.deadlineMillis = deadlineMillis;
@@ -204,11 +238,27 @@ public class AlphaBetaSearch {
                 return board.evaluate(player);
             }
 
-            List<AmazonsMove> orderedMoves = orderMoves(player, depth);
+            List<AmazonsMove> orderedMoves = orderMoves(player, depth, ply);
             int bestScore = NEG_INF;
+            boolean firstMove = true;
+            int opponent = AmazonsBoardState.opponent(player);
+
             for (AmazonsMove move : orderedMoves) {
                 board.applyMove(move, player);
-                int score = -negamax(AmazonsBoardState.opponent(player), depth - 1, -beta, -alpha, ply + 1);
+                int score;
+
+                if (firstMove) {
+                    // Full window for first (PV) move.
+                    score = -negamax(opponent, depth - 1, -beta, -alpha, ply + 1);
+                    firstMove = false;
+                } else {
+                    // Null-window search (PVS).
+                    score = -negamax(opponent, depth - 1, -alpha - 1, -alpha, ply + 1);
+                    // Re-search with full window if score is inside the window.
+                    if (!timedOut && score > alpha && score < beta) {
+                        score = -negamax(opponent, depth - 1, -beta, -alpha, ply + 1);
+                    }
+                }
                 board.undoMove(move, player);
 
                 if (score > bestScore) {
@@ -218,6 +268,8 @@ public class AlphaBetaSearch {
                     alpha = score;
                 }
                 if (alpha >= beta) {
+                    // Beta cutoff: store killer move.
+                    storeKiller(move, ply);
                     break;
                 }
             }
@@ -225,25 +277,31 @@ public class AlphaBetaSearch {
             return bestScore;
         }
 
-        private List<AmazonsMove> orderMoves(int player, int depthRemaining) {
+        private void storeKiller(AmazonsMove move, int ply) {
+            if (ply >= MAX_PLY) return;
+            if (!move.equals(killer0[ply])) {
+                killer1[ply] = killer0[ply];
+                killer0[ply] = move;
+            }
+        }
+
+        private List<AmazonsMove> orderMoves(int player, int depthRemaining, int ply) {
             List<AmazonsMove> moves = board.generateMoves(player);
             if (moves.size() <= 1) {
                 return moves;
             }
 
-            List<ScoredMove> prefilter = new ArrayList<ScoredMove>(moves.size());
-            for (AmazonsMove move : moves) {
-                int score = 6 * centerBias(move) + 2 * centerBias(move.getArrowRow(), move.getArrowCol());
-                prefilter.add(new ScoredMove(move, score));
-            }
-            Collections.sort(prefilter, Comparator.comparingInt(ScoredMove::getScore).reversed());
-            int candidateCount = Math.min(prefilter.size(), CHILD_PREFILTER_LIMIT);
+            AmazonsMove k0 = ply < MAX_PLY ? killer0[ply] : null;
+            AmazonsMove k1 = ply < MAX_PLY ? killer1[ply] : null;
 
-            List<ScoredMove> scored = new ArrayList<ScoredMove>(candidateCount);
-            int opponent = AmazonsBoardState.opponent(player);
-            for (int i = 0; i < candidateCount; i++) {
-                AmazonsMove move = prefilter.get(i).move;
+            List<ScoredMove> scoredMoves = new ArrayList<ScoredMove>(moves.size());
+            int evaluated = 0;
+            for (AmazonsMove move : moves) {
+                if (evaluated++ % 50 == 0 && isExpired()) {
+                    break;
+                }
                 board.applyMove(move, player);
+                int opponent = AmazonsBoardState.opponent(player);
                 int score = 6 * centerBias(move) + 2 * centerBias(move.getArrowRow(), move.getArrowCol());
                 if (!board.hasAnyMoves(opponent)) {
                     score += 1_000_000;
@@ -251,14 +309,23 @@ public class AlphaBetaSearch {
                 score += 6 * board.countDestinationsFrom(move.getToRow(), move.getToCol());
                 score += 20 * (board.countActiveQueens(player) - board.countActiveQueens(opponent));
                 board.undoMove(move, player);
-                scored.add(new ScoredMove(move, score));
+
+                // Killer move bonuses for better ordering.
+                if (move.equals(k0)) {
+                    score += 500_000;
+                } else if (move.equals(k1)) {
+                    score += 400_000;
+                }
+
+                scoredMoves.add(new ScoredMove(move, score));
             }
 
-            Collections.sort(scored, Comparator.comparingInt(ScoredMove::getScore).reversed());
-            int moveLimit = Math.min(scored.size(), CHILD_MOVE_LIMIT);
+            Collections.sort(scoredMoves, Comparator.comparingInt(ScoredMove::getScore).reversed());
+
+            int moveLimit = Math.min(scoredMoves.size(), CHILD_MOVE_LIMIT);
             List<AmazonsMove> ordered = new ArrayList<AmazonsMove>(moveLimit);
             for (int i = 0; i < moveLimit; i++) {
-                ordered.add(scored.get(i).move);
+                ordered.add(scoredMoves.get(i).move);
             }
             return ordered;
         }
