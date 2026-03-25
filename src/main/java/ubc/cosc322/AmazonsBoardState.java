@@ -59,7 +59,7 @@ public class AmazonsBoardState {
         for (int row = 0; row < BOARD_DIMENSION; row++) {
             System.arraycopy(board[row], 0, copy.board[row], 0, BOARD_DIMENSION);
         }
-        // Copy queen position cache
+
         int bc = queenCount[BLACK];
         int wc = queenCount[WHITE];
         System.arraycopy(queenRows[BLACK], 0, copy.queenRows[BLACK], 0, bc);
@@ -140,7 +140,7 @@ public class AmazonsBoardState {
         board[move.getFromRow()][move.getFromCol()] = EMPTY;
         board[move.getToRow()][move.getToCol()] = player;
         board[move.getArrowRow()][move.getArrowCol()] = ARROW;
-        // Update queen cache: move from -> to
+      
         int count = queenCount[player];
         int fr = move.getFromRow(), fc = move.getFromCol();
         int tr = move.getToRow(), tc = move.getToCol();
@@ -285,7 +285,7 @@ public class AmazonsBoardState {
         return pressure;
     }
 
-    // BFS-based queen-move distances from all queens of the given player.
+   
     private int[][] queenDistances(int player) {
         int[][] distances = new int[BOARD_DIMENSION][BOARD_DIMENSION];
         for (int row = 0; row < BOARD_DIMENSION; row++) {

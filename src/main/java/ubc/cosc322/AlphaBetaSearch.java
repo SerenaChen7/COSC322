@@ -63,7 +63,6 @@ public class AlphaBetaSearch {
         int bestScore = NEG_INF;
         int bestDepth = 0;
 
-        // Single worker reused across all depth iterations so killer moves persist.
         SearchWorker worker = new SearchWorker(board, deadlineMillis);
         AmazonsMove preferredMove = null;
 
@@ -74,7 +73,7 @@ public class AlphaBetaSearch {
 
             List<AmazonsMove> orderedMoves = orderRootMoves(board, sideToMove, preferredMove, depth);
 
-            // Aspiration windows: narrow the initial search window based on the previous score.
+    
             int alpha, beta;
             if (depth > 2 && bestScore != NEG_INF) {
                 alpha = bestScore - ASPIRATION_DELTA;
@@ -88,7 +87,6 @@ public class AlphaBetaSearch {
             int depthBestScore = NEG_INF;
             boolean timedOut = false;
 
-            // Retry loop for aspiration window failures.
             aspirationLoop:
             while (true) {
                 int searchAlpha = alpha;
@@ -100,19 +98,16 @@ public class AlphaBetaSearch {
                     board.applyMove(move, sideToMove);
                     int score;
                     if (firstMove) {
-                        // Full window for first (best-ordered) move.
                         score = -worker.negamax(
                             AmazonsBoardState.opponent(sideToMove), depth - 1,
                             -beta, -searchAlpha, 1
                         );
                         firstMove = false;
                     } else {
-                        // Null-window (PVS) search for remaining moves.
                         score = -worker.negamax(
                             AmazonsBoardState.opponent(sideToMove), depth - 1,
                             -searchAlpha - 1, -searchAlpha, 1
                         );
-                        // Re-search with full window if score is inside the window.
                         if (!worker.timedOut && score > searchAlpha && score < beta) {
                             score = -worker.negamax(
                                 AmazonsBoardState.opponent(sideToMove), depth - 1,
@@ -136,13 +131,12 @@ public class AlphaBetaSearch {
                     }
                 }
 
-                // Handle aspiration window failures.
                 if (depthBestScore <= alpha && alpha != NEG_INF) {
-                    alpha = NEG_INF; // Fail low: widen to full window.
+                    alpha = NEG_INF; 
                 } else if (depthBestScore >= beta && beta != POS_INF) {
-                    beta = POS_INF; // Fail high: widen to full window.
+                    beta = POS_INF; 
                 } else {
-                    break; // Within window — done.
+                    break;
                 }
             }
 
@@ -216,7 +210,6 @@ public class AlphaBetaSearch {
         boolean timedOut;
         long nodes;
 
-        // Killer moves: two per ply for beta-cutoff move ordering bonus.
         private final AmazonsMove[] killer0 = new AmazonsMove[MAX_PLY];
         private final AmazonsMove[] killer1 = new AmazonsMove[MAX_PLY];
 
@@ -248,11 +241,9 @@ public class AlphaBetaSearch {
                 int score;
 
                 if (firstMove) {
-                    // Full window for first (PV) move.
                     score = -negamax(opponent, depth - 1, -beta, -alpha, ply + 1);
                     firstMove = false;
                 } else {
-                    // Null-window search (PVS).
                     score = -negamax(opponent, depth - 1, -alpha - 1, -alpha, ply + 1);
                     // Re-search with full window if score is inside the window.
                     if (!timedOut && score > alpha && score < beta) {
